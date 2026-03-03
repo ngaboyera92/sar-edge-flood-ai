@@ -1,0 +1,7 @@
+# Teacher UNet baseline
+run_name: teacher_unet_base32
+epochs: 30
+batch_size: 8
+lr: 0.0003
+seed: 0
+base: 32
