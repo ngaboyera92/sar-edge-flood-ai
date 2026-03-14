@@ -1,0 +1,5 @@
+run_name: student_unet_base16
+epochs: 40
+batch_size: 8
+lr: 0.0003
+base: 16
