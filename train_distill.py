@@ -57,10 +57,12 @@ def main():
     with open(config_path) as f:
         cfg = yaml.safe_load(f)
 
-    run_name = "student_distilled_base16"
+    run_name = cfg["run_name"]
     epochs = cfg["epochs"]
     batch_size = cfg["batch_size"]
     lr = cfg["lr"]
+    base = cfg["base"]
+    beta = cfg["beta"]
 
     data_root = "/content/drive/MyDrive/sar-edge-flood-ai/datasets/Sen1Floods11/v1.2"
     outputs_root = "/content/drive/MyDrive/sar-edge-flood-ai/outputs"
@@ -93,7 +95,7 @@ def main():
     for param in teacher.parameters():
         param.requires_grad = False
 
-    student = UNet(in_channels=2, out_channels=1, base=16).to(device)
+    student = UNet(in_channels=2, out_channels=1, base=base).to(device)
 
     optimizer = torch.optim.Adam(student.parameters(), lr=lr)
     scheduler = ReduceLROnPlateau(optimizer, mode="max", patience=3, factor=0.5)
@@ -117,7 +119,7 @@ def main():
 
             student_logits = student(x)
 
-            loss = distillation_loss(student_logits, teacher_logits, y)
+            loss = distillation_loss(student_logits, teacher_logits, y, beta=beta)
             loss.backward()
             optimizer.step()
 
@@ -139,7 +141,7 @@ def main():
                 teacher_logits = teacher(x)
                 student_logits = student(x)
 
-                loss = distillation_loss(student_logits, teacher_logits, y)
+                loss = distillation_loss(student_logits, teacher_logits, y, beta=beta)
 
                 val_loss += loss.item()
                 val_iou += compute_iou(student_logits, y).item()
