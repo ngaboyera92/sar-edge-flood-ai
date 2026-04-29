@@ -15,4 +15,4 @@ This repository implements **knowledge distillation** to train a compact UNet st
 | **Distilled Student (β=0.3)** | **0.84M** | **3.25** | **0.567** | **0.567** | **150** |
 | Distilled Student (gated, β=0.3) | 0.84M | 3.25 | 0.552 | 0.544 | 150 |
 
-## Repository Structure
+## Repository Structure & File Descriptions
