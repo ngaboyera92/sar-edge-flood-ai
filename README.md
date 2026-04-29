@@ -53,3 +53,6 @@ drive.mount('/content/drive')
 
 # Train gated student (ablation)
 !python train_distill_gated.py
+
+Citation
+If you use this code, please cite this repository.
