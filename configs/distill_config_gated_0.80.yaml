@@ -1,0 +1,8 @@
+run_name: student_distilled_base16_beta0.3_gated_0.80
+epochs: 40
+batch_size: 8
+lr: 0.0003
+seed: 0
+base: 16
+beta: 0.3
+gate_threshold: 0.80
