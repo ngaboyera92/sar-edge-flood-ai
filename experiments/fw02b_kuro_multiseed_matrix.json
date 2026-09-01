@@ -1,0 +1,45 @@
+{
+  "experiment_id": "FW-02B",
+  "stage": "B",
+  "description": "Frozen Kuro Siwo external robustness evaluation of all 10 Stage A compact-student checkpoints",
+  "source_stage_commit": "6aea4d4f95116e885ba57c7c1856ec8b3531a3f8",
+  "stage_a_parent_output": "outputs/FW-02A_multiseed_beta0_vs_beta03_seeds0-4_20260901",
+  "stage_b_parent_output": "outputs/FW-02B_kuro_multiseed_seeds0-4_20260901",
+  "dataset": {
+    "repository": "orion-ai-lab/Kuro-Siwo-Webdataset",
+    "split": "labelled test_GRD",
+    "expected_shards": 12,
+    "expected_samples": 67490,
+    "expected_events": 43,
+    "input_fields": ["flood_vv.npy", "flood_vh.npy"],
+    "channel_order": ["VV", "VH"],
+    "radiometric_transform": "10*log10(linear sigma)",
+    "normalization": "none",
+    "clipping": "none",
+    "valid_pixels": "valid_mask == 1 and mask in {0,1,2}",
+    "ignored_label_values": [3]
+  },
+  "evaluation": {
+    "precision": "PyTorch FP32",
+    "batch_size_cuda": 32,
+    "threshold": 0.5,
+    "primary_target": "flood-only: mask == 2",
+    "secondary_target": "total-water: mask in {1,2}",
+    "event_grouping": "actid + flood_date",
+    "fine_tuning": false,
+    "threshold_tuning": false,
+    "model_selection_on_kuro": false
+  },
+  "models": [
+    {"order":1,"seed":0,"beta":0.0,"run_name":"FW02A_unetb16_beta0p0_seed00","checkpoint_sha256":"17d34c2c09166e31587674dbaedb99114c2a325e9086176c2119c756be48f8ab"},
+    {"order":2,"seed":0,"beta":0.3,"run_name":"FW02A_unetb16_beta0p3_seed00","checkpoint_sha256":"7f5ad2bf4d967eead1d9e2a3b6f99f6c61384fa369981a0c7e20bbd58db2a4e1"},
+    {"order":3,"seed":1,"beta":0.3,"run_name":"FW02A_unetb16_beta0p3_seed01","checkpoint_sha256":"5472ea6433642d1ea777d1a7307993c29e0f743bbac528338b6a38af0987c0e2"},
+    {"order":4,"seed":1,"beta":0.0,"run_name":"FW02A_unetb16_beta0p0_seed01","checkpoint_sha256":"af4f1e5245773830da5645556a6b905f16a5b0879e6197cf60626a2da4a09dd5"},
+    {"order":5,"seed":2,"beta":0.0,"run_name":"FW02A_unetb16_beta0p0_seed02","checkpoint_sha256":"bc59126ab210f470032423e206d15f881f1fe5e80ecc1e6c843e38aa07f9bb04"},
+    {"order":6,"seed":2,"beta":0.3,"run_name":"FW02A_unetb16_beta0p3_seed02","checkpoint_sha256":"57974f5e6ab2e5f66034aa07cac74d6904e8b6dc11f590a301d9e4e004f952f0"},
+    {"order":7,"seed":3,"beta":0.3,"run_name":"FW02A_unetb16_beta0p3_seed03","checkpoint_sha256":"b41b48fd8fff88d2565686bd4efb69bbc7b947c699b2036aff3089522e638119"},
+    {"order":8,"seed":3,"beta":0.0,"run_name":"FW02A_unetb16_beta0p0_seed03","checkpoint_sha256":"694212a17f9515d77684492ffbcd1032aeca0ba3e49906ad9dcdf5aee56b8f7e"},
+    {"order":9,"seed":4,"beta":0.0,"run_name":"FW02A_unetb16_beta0p0_seed04","checkpoint_sha256":"e08622439733802e8ad34aa4298ed2e132a82382fc1253c792e4660a65876062"},
+    {"order":10,"seed":4,"beta":0.3,"run_name":"FW02A_unetb16_beta0p3_seed04","checkpoint_sha256":"ea3c9412f842c07a96ea1ac639ec59f1b6caaab0c17e2e6d133bab70ad004948"}
+  ]
+}
