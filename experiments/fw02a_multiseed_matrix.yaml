@@ -1,0 +1,31 @@
+experiment_id: FW-02A
+parent_output: FW-02A_multiseed_beta0_vs_beta03_seeds0-4_20260901
+base_commit: 6a5d49bcd0819e5a58c64d078d7b05691187a945
+protocol:
+  epochs: 40
+  batch_size: 8
+  lr: 0.0003
+  base: 16
+  gate_threshold: 1.0
+  threshold: 0.5
+  expected_split_counts:
+    train: 252
+    val: 89
+    test: 89
+  expected_split_sha256:
+    train: 05e915d7f63b40b931a9adf08fdc05becff9e506551e0d4b69f60d63c9fb7ea9
+    val: 27eb72a74d020ce8348bfad1ff7b0f828ccf40ea77a839bb23615d7c9c28fe1c
+    test: a65820baa38b69ace9239d7b25c38f3fbe944a7d69b2e412706aac80d68348bf
+  teacher_relpath: outputs/teacher_unet_base64/teacher_unet_best_0.5532_epoch30.pt
+  teacher_sha256: 146c50eda909cdac2522a966cb57d16289a02480146c2356e6d5d96d39b2f694
+runs:
+  - {order: 1, run_name: FW02A_unetb16_beta0p0_seed00, seed: 0, beta: 0.0}
+  - {order: 2, run_name: FW02A_unetb16_beta0p3_seed00, seed: 0, beta: 0.3}
+  - {order: 3, run_name: FW02A_unetb16_beta0p3_seed01, seed: 1, beta: 0.3}
+  - {order: 4, run_name: FW02A_unetb16_beta0p0_seed01, seed: 1, beta: 0.0}
+  - {order: 5, run_name: FW02A_unetb16_beta0p0_seed02, seed: 2, beta: 0.0}
+  - {order: 6, run_name: FW02A_unetb16_beta0p3_seed02, seed: 2, beta: 0.3}
+  - {order: 7, run_name: FW02A_unetb16_beta0p3_seed03, seed: 3, beta: 0.3}
+  - {order: 8, run_name: FW02A_unetb16_beta0p0_seed03, seed: 3, beta: 0.0}
+  - {order: 9, run_name: FW02A_unetb16_beta0p0_seed04, seed: 4, beta: 0.0}
+  - {order: 10, run_name: FW02A_unetb16_beta0p3_seed04, seed: 4, beta: 0.3}
