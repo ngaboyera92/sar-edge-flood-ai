@@ -2,7 +2,6 @@ import os
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 import argparse
-import csv
 import hashlib
 import json
 import platform
@@ -196,7 +195,7 @@ def evaluate(model, loader, device, threshold):
             x, y = x.to(device), y.to(device).float()
             logits = model(x)
             batch_scores.append(batch_iou(logits, y, threshold).item())
-            pred = (torch.sigmoid(logits) > threshold)
+            pred = torch.sigmoid(logits) > threshold
             target = y > 0.5
             tp += int((pred & target).sum().item())
             fp += int((pred & ~target).sum().item())
@@ -223,14 +222,14 @@ def main():
     outputs_root = project_root / "outputs"
 
     repo = audit_repo(args.expected_commit)
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA GPU is required for this controlled Stage A experiment.")
+    device = torch.device("cuda")
     split_info, datasets = audit_data(data_root, protocol)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     teacher_path, teacher_hash, teacher_ckpt, teacher = audit_teacher(project_root, protocol, device)
 
     parent = outputs_root / matrix["parent_output"]
-    existing_runs = [str(parent / r["run_name"]) for r in matrix["runs"] if (parent / r["run_name"]).exists()]
-    if existing_runs:
-        raise RuntimeError("One or more Stage A run folders already exist; refusing to continue:\n" + "\n".join(existing_runs))
+    existing_runs = [r["run_name"] for r in matrix["runs"] if (parent / r["run_name"]).exists()]
 
     print("STATUS: READY TO START")
     print(json.dumps({
@@ -241,8 +240,10 @@ def main():
         "teacher_epoch": teacher_ckpt.get("epoch"),
         "teacher_val_iou": teacher_ckpt.get("val_iou"),
         "device": str(device),
+        "device_name": torch.cuda.get_device_name(0),
         "parent_output": str(parent),
         "predeclared_runs": len(matrix["runs"]),
+        "existing_predeclared_run_folders": existing_runs,
     }, indent=2))
 
     if args.preflight_only:
@@ -267,7 +268,7 @@ def main():
 
     run_dir = parent / run["run_name"]
     if run_dir.exists():
-        raise FileExistsError(f"Refusing to overwrite existing run directory: {run_dir}")
+        raise FileExistsError(f"Refusing to repeat or overwrite existing run directory: {run_dir}")
     parent.mkdir(parents=True, exist_ok=True)
     run_dir.mkdir(parents=False, exist_ok=False)
 
@@ -297,96 +298,104 @@ def main():
     best_epoch = None
     best_path = run_dir / "best_validation_checkpoint.pt"
     metrics = []
+    log_path = run_dir / "training.log"
 
-    for epoch in range(1, epochs + 1):
-        student.train()
-        train_loss = 0.0
-        train_iou = 0.0
-        for x, y in train_loader:
-            x, y = x.to(device), y.to(device).float()
-            optimizer.zero_grad(set_to_none=True)
-            with torch.no_grad():
-                teacher_logits = teacher(x)
-            student_logits = student(x)
-            loss = task_plus_kd_loss(student_logits, teacher_logits, y, beta)
-            loss.backward()
-            optimizer.step()
-            train_loss += loss.item()
-            train_iou += batch_iou(student_logits, y, threshold).item()
-        train_loss /= len(train_loader)
-        train_iou /= len(train_loader)
+    with log_path.open("w", buffering=1) as logf:
+        def log(msg):
+            print(msg, flush=True)
+            logf.write(msg + "\n")
 
-        student.eval()
-        val_loss = 0.0
-        val_iou = 0.0
-        with torch.no_grad():
-            for x, y in val_loader:
+        log(f"RUN START {datetime.now(timezone.utc).isoformat()}")
+        log(f"run_name={run['run_name']} order={run['order']} seed={seed} beta={beta}")
+        log(f"repo_commit={repo['commit']} device={torch.cuda.get_device_name(0)}")
+
+        for epoch in range(1, epochs + 1):
+            student.train()
+            train_loss = 0.0
+            train_iou = 0.0
+            for x, y in train_loader:
                 x, y = x.to(device), y.to(device).float()
-                teacher_logits = teacher(x)
+                optimizer.zero_grad(set_to_none=True)
+                with torch.no_grad():
+                    teacher_logits = teacher(x)
                 student_logits = student(x)
                 loss = task_plus_kd_loss(student_logits, teacher_logits, y, beta)
-                val_loss += loss.item()
-                val_iou += batch_iou(student_logits, y, threshold).item()
-        val_loss /= len(val_loader)
-        val_iou /= len(val_loader)
-        scheduler.step(val_iou)
-        lr_now = optimizer.param_groups[0]["lr"]
+                loss.backward()
+                optimizer.step()
+                train_loss += loss.item()
+                train_iou += batch_iou(student_logits, y, threshold).item()
+            train_loss /= len(train_loader)
+            train_iou /= len(train_loader)
 
-        row = {
-            "epoch": epoch, "lr": lr_now, "train_loss": train_loss, "train_iou": train_iou,
-            "val_loss": val_loss, "val_iou": val_iou,
+            student.eval()
+            val_loss = 0.0
+            val_iou = 0.0
+            with torch.no_grad():
+                for x, y in val_loader:
+                    x, y = x.to(device), y.to(device).float()
+                    teacher_logits = teacher(x)
+                    student_logits = student(x)
+                    loss = task_plus_kd_loss(student_logits, teacher_logits, y, beta)
+                    val_loss += loss.item()
+                    val_iou += batch_iou(student_logits, y, threshold).item()
+            val_loss /= len(val_loader)
+            val_iou /= len(val_loader)
+            scheduler.step(val_iou)
+            lr_now = optimizer.param_groups[0]["lr"]
+
+            metrics.append({
+                "epoch": epoch, "lr": lr_now, "train_loss": train_loss, "train_iou": train_iou,
+                "val_loss": val_loss, "val_iou": val_iou,
+            })
+            log(f"Epoch {epoch:02d}/{epochs} | train_loss={train_loss:.6f} | train_iou={train_iou:.6f} | val_loss={val_loss:.6f} | val_iou={val_iou:.6f} | lr={lr_now:.8g}")
+
+            if val_iou > best_iou:
+                best_iou = val_iou
+                best_epoch = epoch
+                torch.save({
+                    "epoch": epoch,
+                    "model_state": student.state_dict(),
+                    "val_iou": val_iou,
+                    "seed": seed,
+                    "beta": beta,
+                    "run_name": run["run_name"],
+                    "repo_commit": repo["commit"],
+                }, best_path)
+
+        pd.DataFrame(metrics).to_csv(run_dir / "metrics.csv", index=False)
+
+        best_ckpt = torch.load(best_path, map_location=device)
+        final_model = UNet(in_channels=2, out_channels=1, base=base).to(device)
+        final_model.load_state_dict(best_ckpt["model_state"], strict=True)
+        test_batch_mean_iou, test_micro_iou, counts = evaluate(final_model, test_loader, device, threshold)
+        ckpt_hash = sha256_file(best_path)
+
+        summary = {
+            "experiment_id": matrix["experiment_id"],
+            "run_name": run["run_name"],
+            "order": int(run["order"]),
+            "seed": seed,
+            "beta": beta,
+            "best_epoch": int(best_epoch),
+            "best_validation_iou_batch_mean": float(best_iou),
+            "test_iou_batch_mean": test_batch_mean_iou,
+            "test_iou_micro": test_micro_iou,
+            "test_counts": counts,
+            "threshold": threshold,
+            "checkpoint": str(best_path),
+            "checkpoint_sha256": ckpt_hash,
+            "repository_commit": repo["commit"],
+            "teacher_sha256": teacher_hash,
         }
-        metrics.append(row)
-        print(f"Epoch {epoch:02d}/{epochs} | train_loss={train_loss:.6f} | train_iou={train_iou:.6f} | val_loss={val_loss:.6f} | val_iou={val_iou:.6f} | lr={lr_now:.8g}", flush=True)
+        with (run_dir / "run_summary.json").open("w") as f:
+            json.dump(summary, f, indent=2)
+        log("RUN COMPLETE")
+        log(json.dumps(summary, indent=2))
 
-        if val_iou > best_iou:
-            best_iou = val_iou
-            best_epoch = epoch
-            torch.save({
-                "epoch": epoch,
-                "model_state": student.state_dict(),
-                "val_iou": val_iou,
-                "seed": seed,
-                "beta": beta,
-                "run_name": run["run_name"],
-                "repo_commit": repo["commit"],
-            }, best_path)
-
-    pd.DataFrame(metrics).to_csv(run_dir / "metrics.csv", index=False)
-
-    best_ckpt = torch.load(best_path, map_location=device)
-    final_model = UNet(in_channels=2, out_channels=1, base=base).to(device)
-    final_model.load_state_dict(best_ckpt["model_state"], strict=True)
-    test_batch_mean_iou, test_micro_iou, counts = evaluate(final_model, test_loader, device, threshold)
-    ckpt_hash = sha256_file(best_path)
-
-    summary = {
-        "experiment_id": matrix["experiment_id"],
-        "run_name": run["run_name"],
-        "order": int(run["order"]),
-        "seed": seed,
-        "beta": beta,
-        "best_epoch": int(best_epoch),
-        "best_validation_iou_batch_mean": float(best_iou),
-        "test_iou_batch_mean": test_batch_mean_iou,
-        "test_iou_micro": test_micro_iou,
-        "test_counts": counts,
-        "threshold": threshold,
-        "checkpoint": str(best_path),
-        "checkpoint_sha256": ckpt_hash,
-        "repository_commit": repo["commit"],
-        "teacher_sha256": teacher_hash,
-    }
-    with (run_dir / "run_summary.json").open("w") as f:
-        json.dump(summary, f, indent=2)
     with (run_dir / "SHA256SUMS.txt").open("w") as f:
-        f.write(f"{ckpt_hash}  {best_path.name}\n")
-        f.write(f"{sha256_file(run_dir / 'metrics.csv')}  metrics.csv\n")
-        f.write(f"{sha256_file(run_dir / 'run_manifest.json')}  run_manifest.json\n")
-        f.write(f"{sha256_file(run_dir / 'run_summary.json')}  run_summary.json\n")
-
-    print("RUN COMPLETE")
-    print(json.dumps(summary, indent=2))
+        for name in ("best_validation_checkpoint.pt", "metrics.csv", "run_manifest.json", "run_summary.json", "run_config.yaml", "training.log"):
+            p = run_dir / name
+            f.write(f"{sha256_file(p)}  {name}\n")
 
 
 if __name__ == "__main__":
