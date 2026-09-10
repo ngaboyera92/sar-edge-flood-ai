@@ -1,11 +1,13 @@
 """Drive-authoritative training-run evidence persistence for frozen G4.
 
 The helpers create the exact frozen leaf names, refuse pre-existing run folders,
-append only within an active run, and finalize immutable completion/checksum records.
+append only within an active run, preserve the exact immutable config bytes, and
+finalize completion/checksum records.
 """
 from __future__ import annotations
 
 import csv
+import json
 import os
 import platform
 import sys
@@ -16,6 +18,7 @@ import torch
 
 from .artifact_protocol import (
     create_training_run_dirs,
+    write_new_bytes,
     write_new_json,
     write_new_text,
     write_checksum_manifest,
@@ -61,18 +64,32 @@ def initialize_run_evidence(
     cfg,
     *,
     implementation_sha,
+    immutable_config_path,
     immutable_config_sha256,
     input_identities,
 ):
-    """Create exact run/checkpoint dirs and the initial required run evidence."""
+    """Create exact run/checkpoint dirs and initial required evidence.
+
+    `run_config.json` is a byte-for-byte copy of the immutable source config after
+    verifying both its SHA-256 and parsed JSON identity against `cfg`.
+    """
     run_id = str(cfg["run_id"])
-    if not immutable_config_sha256 or len(str(immutable_config_sha256)) != 64:
-        raise ValueError("immutable_config_sha256 must be a 64-character SHA-256")
+    config_path = Path(immutable_config_path)
+    if not config_path.is_file():
+        raise FileNotFoundError(config_path)
+    got_sha = sha256_file(config_path)
+    if got_sha != str(immutable_config_sha256):
+        raise RuntimeError(
+            f"Immutable config SHA-256 mismatch: {got_sha} != {immutable_config_sha256}"
+        )
+    source_cfg = json.loads(config_path.read_text(encoding="utf-8"))
+    if source_cfg != cfg:
+        raise RuntimeError("Parsed immutable config does not equal supplied run config")
     if not isinstance(input_identities, dict) or not input_identities:
         raise ValueError("input_identities must be a non-empty dictionary")
 
     run_dir, ckpt_dir = create_training_run_dirs(project_root, run_id)
-    write_new_json(run_dir / "run_config.json", cfg)
+    write_new_bytes(run_dir / "run_config.json", config_path.read_bytes())
     write_new_json(
         run_dir / "run_manifest.json",
         {
@@ -92,6 +109,7 @@ def initialize_run_evidence(
         "Semantic Shift frozen run\n"
         f"run_id={run_id}\n"
         f"implementation_sha={implementation_sha}\n"
+        f"immutable_config_sha256={immutable_config_sha256}\n"
         "status=STARTED\n",
     )
     with (run_dir / "epoch_metrics.csv").open("x", encoding="utf-8", newline="") as f:
