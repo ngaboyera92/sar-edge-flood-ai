@@ -106,39 +106,43 @@ class DuckDBScoreStore:
         ).fetchall()
         return {str(e): float(ap) for e, ap in rows}
 
-    def operating_point_match(self, reference_precision, reference_recall):
-        """Pooled A3 diagnostic. Exact distance ties resolve to higher threshold."""
-        ref_p = float(reference_precision)
-        ref_r = float(reference_recall)
-        total_pos = self.con.execute("SELECT SUM(target)::DOUBLE FROM scores").fetchone()[0]
-        if total_pos is None or total_pos <= 0:
-            raise RuntimeError("Operating-point curve undefined with zero positive support")
-        self.con.execute(
-            """
-            CREATE OR REPLACE TEMP VIEW _pr_curve AS
-            WITH grouped AS (
+    def _nearest_pr_point(self, reference, metric):
+        if metric not in {"precision", "recall"}:
+            raise ValueError("metric must be precision or recall")
+        expression = "tp / rank" if metric == "precision" else "tp / total.p"
+        row = self.con.execute(
+            f"""
+            WITH total AS (
+                SELECT SUM(target)::DOUBLE AS p FROM scores
+            ), grouped AS (
                 SELECT score, COUNT(*)::DOUBLE AS n, SUM(target)::DOUBLE AS pos
                 FROM scores GROUP BY score
+            ), curve AS (
+                SELECT score,
+                       SUM(pos) OVER (ORDER BY score DESC ROWS UNBOUNDED PRECEDING) AS tp,
+                       SUM(n) OVER (ORDER BY score DESC ROWS UNBOUNDED PRECEDING) AS rank
+                FROM grouped
             )
             SELECT score AS threshold,
-                   SUM(pos) OVER (ORDER BY score DESC ROWS UNBOUNDED PRECEDING)
-                   / SUM(n) OVER (ORDER BY score DESC ROWS UNBOUNDED PRECEDING) AS precision,
-                   SUM(pos) OVER (ORDER BY score DESC ROWS UNBOUNDED PRECEDING) / ? AS recall
-            FROM grouped
+                   tp / rank AS precision,
+                   tp / total.p AS recall
+            FROM curve CROSS JOIN total
+            WHERE total.p > 0
+            ORDER BY abs(({expression}) - ?) ASC, score DESC
+            LIMIT 1
             """,
-            [float(total_pos)],
-        )
-        p_row = self.con.execute(
-            "SELECT threshold, precision, recall FROM _pr_curve ORDER BY abs(precision-?) ASC, threshold DESC LIMIT 1",
-            [ref_p],
+            [float(reference)],
         ).fetchone()
-        r_row = self.con.execute(
-            "SELECT threshold, precision, recall FROM _pr_curve ORDER BY abs(recall-?) ASC, threshold DESC LIMIT 1",
-            [ref_r],
-        ).fetchone()
-        def pack(row):
-            return {"threshold": float(row[0]), "precision": float(row[1]), "recall": float(row[2])}
-        return {"precision_matched": pack(p_row), "recall_matched": pack(r_row)}
+        if row is None:
+            raise RuntimeError("Operating-point curve undefined with zero positive support")
+        return {"threshold": float(row[0]), "precision": float(row[1]), "recall": float(row[2])}
+
+    def operating_point_match(self, reference_precision, reference_recall):
+        """Pooled A3 diagnostic. Exact distance ties resolve to higher threshold."""
+        return {
+            "precision_matched": self._nearest_pr_point(reference_precision, "precision"),
+            "recall_matched": self._nearest_pr_point(reference_recall, "recall"),
+        }
 
     def close(self):
         if self.con is not None:
