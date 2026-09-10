@@ -6,7 +6,6 @@ append only within an active run, and finalize immutable completion/checksum rec
 from __future__ import annotations
 
 import csv
-import json
 import os
 import platform
 import sys
@@ -48,7 +47,7 @@ def environment_snapshot():
         "deterministic_algorithms": bool(torch.are_deterministic_algorithms_enabled()),
         "CUBLAS_WORKSPACE_CONFIG": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
     }
-    for package in ("albumentations", "rasterio", "pandas"):
+    for package in ("albumentations", "rasterio", "pandas", "duckdb"):
         try:
             mod = __import__(package)
             out[package] = getattr(mod, "__version__", "unknown")
@@ -153,7 +152,7 @@ def finalize_run_evidence(run_dir, ckpt_dir, *, status, best_epoch, best_metric,
         "run_manifest_sha256": sha256_file(run_dir / "run_manifest.json"),
         "epoch_metrics_sha256": sha256_file(run_dir / "epoch_metrics.csv"),
         "training_log_sha256": sha256_file(run_dir / "training_log.txt"),
-        "checkpoint_sha256_manifest": "07_Checkpoints/{run_id}/CHECKPOINT_SHA256SUMS.txt",
+        "checkpoint_sha256_manifest_leaf": "CHECKPOINT_SHA256SUMS.txt",
     }
     write_new_json(run_dir / "completion_status.json", completion)
     return completion
