@@ -113,6 +113,7 @@ def train_frozen_run(
     frozen_implementation_sha,
     overall_g4_status,
     device,
+    immutable_config_path,
     immutable_config_sha256,
     input_identities,
     teacher_model=None,
@@ -155,6 +156,7 @@ def train_frozen_run(
             project_root,
             cfg,
             implementation_sha=implementation_sha,
+            immutable_config_path=immutable_config_path,
             immutable_config_sha256=immutable_config_sha256,
             input_identities=input_identities,
         )
@@ -294,7 +296,6 @@ def train_frozen_run(
         )
         verify_required_run_leaves(run_dir, ckpt_dir)
     except Exception as exc:
-        # Preserve evidence only if initialization succeeded and the completion file does not exist.
         if Path(run_dir).is_dir() and not (Path(run_dir) / "completion_status.json").exists():
             append_training_log(run_dir, f"status=FAILED error={type(exc).__name__}: {exc}")
             finalize_run_evidence(
