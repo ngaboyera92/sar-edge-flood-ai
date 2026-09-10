@@ -1,7 +1,7 @@
 """Frozen Semantic Shift training engine.
 
 The public entry point performs the overall-G4 authorization check before any model,
-optimizer, artifact directory, or training loop is created.  The module is therefore
+optimizer, artifact directory, or training loop is created. The module is therefore
 safe to import while G4 is OPEN; execution is blocked until the caller supplies the
 frozen implementation SHA and CLOSED/FROZEN status.
 """
@@ -97,9 +97,9 @@ def train_frozen_run(
 ):
     """Execute exactly one frozen 40-epoch teacher or student run.
 
-    This function must not be called while G4 is OPEN.  Authorization is checked
-    before config validation side effects, model construction, optimizer creation,
-    output-directory creation, or any batch iteration.
+    This function must not be called while G4 is OPEN. Authorization is checked
+    before model construction, optimizer creation, output-directory creation, or
+    any batch iteration.
     """
     assert_training_authorized(
         overall_g4_status=overall_g4_status,
@@ -117,7 +117,8 @@ def train_frozen_run(
     optimizer = build_optimizer(model, cfg)
     scheduler = build_scheduler(optimizer, cfg)
 
-    if cfg["role"] == "student" and cfg["condition_id"] not in {"B0", "A5"}:
+    kd_run = cfg["role"] == "student" and cfg["condition_id"] not in {"B0", "A5"}
+    if kd_run:
         if teacher_model is None:
             raise RuntimeError("Frozen KD student run requires teacher_model")
         teacher_model = teacher_model.to(device)
@@ -145,9 +146,16 @@ def train_frozen_run(
             else:
                 condition = cfg["condition_id"]
                 teacher_logits = None
-                if condition not in {"B0", "A5"}:
+                kd_valid = None
+                if kd_run:
+                    if "teacher_image" not in batch or "kd_valid" not in batch:
+                        raise RuntimeError(
+                            "KD student batch must contain aligned teacher_image and kd_valid"
+                        )
+                    teacher_image = batch["teacher_image"].to(device)
+                    kd_valid = batch["kd_valid"].to(device).bool()
                     with torch.no_grad():
-                        teacher_logits = teacher_model(image)
+                        teacher_logits = teacher_model(teacher_image)
                 loss = student_loss(
                     condition,
                     logits,
@@ -155,6 +163,7 @@ def train_frozen_run(
                     valid,
                     teacher_logits=teacher_logits,
                     beta=0.3,
+                    kd_valid=kd_valid,
                 )
 
             if not bool(torch.isfinite(loss)):
@@ -181,6 +190,7 @@ def train_frozen_run(
                     "model_state_dict": model.state_dict(),
                     "implementation_sha": str(implementation_sha),
                     "run_id": cfg["run_id"],
+                    "run_seed": seed,
                 },
                 ckpt_dir / "best_validation.pt",
             )
@@ -195,10 +205,14 @@ def train_frozen_run(
             extra={
                 "best_epoch": best_epoch,
                 "run_id": cfg["run_id"],
+                "run_seed": seed,
                 "implementation_sha": str(implementation_sha),
             },
         )
-        torch.save(recovery, ckpt_dir / recovery_filename(epoch))
+        recovery_path = ckpt_dir / recovery_filename(epoch)
+        if recovery_path.exists():
+            raise FileExistsError(f"Recovery checkpoint already exists: {recovery_path}")
+        torch.save(recovery, recovery_path)
 
     return {
         "model": model,
