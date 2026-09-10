@@ -30,7 +30,16 @@ def _safe_ratio(num, den):
     return float(num) / float(den) if int(den) > 0 else math.nan
 
 
-def evaluate_frozen_model(model, loader, condition, device, *, score_db_path):
+def evaluate_frozen_model(
+    model,
+    loader,
+    condition,
+    device,
+    *,
+    score_db_path,
+    expected_sample_count=None,
+    expected_event_ids=None,
+):
     """Evaluate one frozen checkpoint on one frozen domain without TTA."""
     condition = str(condition)
     model.eval()
@@ -42,6 +51,7 @@ def evaluate_frozen_model(model, loader, condition, device, *, score_db_path):
         "bin_probability_sum": np.zeros(10, dtype=np.float64),
         "bin_positive_count": np.zeros(10, dtype=np.float64),
     }
+    sample_count = 0
 
     score_path = Path(score_db_path)
     if score_path.exists():
@@ -66,6 +76,7 @@ def evaluate_frozen_model(model, loader, condition, device, *, score_db_path):
                     raise RuntimeError("event_id batch length mismatch")
 
                 for i, event_id in enumerate(event_ids):
+                    sample_count += 1
                     eid = str(event_id)
                     p = prob[i].detach().cpu().float().numpy()
                     y_class = label[i].detach().cpu().numpy()
@@ -75,19 +86,35 @@ def evaluate_frozen_model(model, loader, condition, device, *, score_db_path):
                     counts = chip_sufficient_statistics(p, y_class, v, threshold=0.5)
                     chip_records.append({"event_id": eid, **counts})
 
-                    b = brier_sum_count(p, y, v)
-                    event_brier[eid][0] += b["brier_sum"]
-                    event_brier[eid][1] += b["brier_count"]
-                    pooled_brier[0] += b["brier_sum"]
-                    pooled_brier[1] += b["brier_count"]
+                    if bool(v.any()):
+                        b = brier_sum_count(p, y, v)
+                        event_brier[eid][0] += b["brier_sum"]
+                        event_brier[eid][1] += b["brier_count"]
+                        pooled_brier[0] += b["brier_sum"]
+                        pooled_brier[1] += b["brier_count"]
 
-                    bins = reliability_bin_sufficient_statistics(p, y, v)
-                    for key in pooled_bins:
-                        pooled_bins[key] += bins[key]
+                        bins = reliability_bin_sufficient_statistics(p, y, v)
+                        for key in pooled_bins:
+                            pooled_bins[key] += bins[key]
 
-                    scores.append(eid, p, y, v)
+                        scores.append(eid, p, y, v)
+
+        if expected_sample_count is not None and sample_count != int(expected_sample_count):
+            raise RuntimeError(
+                f"Evaluation sample-count mismatch: {sample_count} != {expected_sample_count}"
+            )
 
         event_rows = aggregate_event_statistics(chip_records)
+        observed_ids = tuple(sorted(r["event_id"] for r in event_rows))
+        if expected_event_ids is not None:
+            expected_ids = tuple(sorted(str(x) for x in expected_event_ids))
+            if observed_ids != expected_ids:
+                missing = sorted(set(expected_ids) - set(observed_ids))
+                extra = sorted(set(observed_ids) - set(expected_ids))
+                raise RuntimeError(
+                    f"Evaluation event identity mismatch: missing={missing}, extra={extra}"
+                )
+
         event_ap = scores.event_average_precision()
         pooled_ap = scores.pooled_average_precision()
 
@@ -104,6 +131,7 @@ def evaluate_frozen_model(model, loader, condition, device, *, score_db_path):
             raise RuntimeError("G4-07 inferential domain requires at least two flood-positive event units")
         perm_positive = [r for r in event_rows if int(r["permanent_water_pixels"]) > 0]
         no_water_positive = [r for r in event_rows if int(r["no_water_pixels"]) > 0]
+        valid_events = [r for r in event_rows if int(r["brier_count"]) > 0]
 
         micro_iou = _safe_ratio(total["tp"], total["tp"] + total["fp"] + total["fn"])
         precision = _safe_ratio(total["tp"], total["tp"] + total["fp"])
@@ -113,6 +141,7 @@ def evaluate_frozen_model(model, loader, condition, device, *, score_db_path):
         summary = {
             "condition_id": condition,
             "threshold": 0.5,
+            "sample_count": sample_count,
             "event_count": len(event_rows),
             "flood_positive_event_count": len(flood_positive),
             "pooled_counts": total,
@@ -134,7 +163,10 @@ def evaluate_frozen_model(model, loader, condition, device, *, score_db_path):
             "pooled_average_precision": pooled_ap,
             "event_macro_average_precision": float(np.mean([event_ap[r["event_id"]] for r in flood_positive])),
             "pooled_brier_score": _safe_ratio(pooled_brier[0], pooled_brier[1]),
-            "event_macro_brier_score": float(np.mean([r["brier_score"] for r in event_rows])),
+            "event_macro_brier_score": (
+                float(np.mean([r["brier_score"] for r in valid_events]))
+                if valid_events else math.nan
+            ),
             "brier_sum": float(pooled_brier[0]),
             "brier_count": int(pooled_brier[1]),
             "reliability_bins": {
