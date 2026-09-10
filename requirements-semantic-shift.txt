@@ -1,0 +1,4 @@
+# Additional runtime dependencies for semantic_shift_v1
+# Exact package versions used by accepted runs are also captured in environment.json.
+albumentations>=2.0,<3
+rasterio>=1.3,<2
