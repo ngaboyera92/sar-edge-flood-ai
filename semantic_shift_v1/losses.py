@@ -48,7 +48,8 @@ def teacher_loss(logits, label, valid):
     )
     return ce + multiclass_soft_dice(logits,label,valid,eps=1e-6)
 
-def student_loss(condition, student_logits, label, valid, teacher_logits=None, beta=0.3):
+def student_loss(condition, student_logits, label, valid, teacher_logits=None,
+                 beta=0.3, kd_valid=None):
     if condition == "A5":
         return teacher_loss(student_logits,label,valid)
     y = (label == 2).float().unsqueeze(1)
@@ -59,4 +60,7 @@ def student_loss(condition, student_logits, label, valid, teacher_logits=None, b
     sup = bce + binary_soft_dice(student_logits,y,v,eps=1e-6)
     if condition == "B0":
         return sup
-    return sup + float(beta) * kd_term(condition,student_logits,teacher_logits,v,eps=1e-6)
+    kv = v if kd_valid is None else kd_valid.bool().unsqueeze(1) if kd_valid.ndim == 3 else kd_valid.bool()
+    if int(kv.sum().item()) == 0:
+        raise RuntimeError("No KD-valid pixels in batch")
+    return sup + float(beta) * kd_term(condition,student_logits,teacher_logits,kv,eps=1e-6)
