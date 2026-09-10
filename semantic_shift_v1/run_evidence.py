@@ -50,7 +50,10 @@ def environment_snapshot():
         "deterministic_algorithms": bool(torch.are_deterministic_algorithms_enabled()),
         "CUBLAS_WORKSPACE_CONFIG": os.environ.get("CUBLAS_WORKSPACE_CONFIG"),
     }
-    for package in ("albumentations", "rasterio", "pandas", "duckdb"):
+    for package in (
+        "albumentations", "rasterio", "pandas", "duckdb",
+        "datasets", "huggingface_hub",
+    ):
         try:
             mod = __import__(package)
             out[package] = getattr(mod, "__version__", "unknown")
